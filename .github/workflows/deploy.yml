@@ -26,12 +26,19 @@ jobs:
         sshpass -p "$PASSWORD" scp -o StrictHostKeyChecking=no site.zip ${{ secrets.IIS_USERNAME }}@${{ secrets.IIS_HOST }}:"C:/temp/site.zip"
 
     - name: Deploy on EC2 via PowerShell
-      uses: jsinh/windows-remote-powershell@v1.1
+      uses: Azure/powershell@v2
       with:
-        host: ${{ secrets.IIS_HOST }}
-        username: ${{ secrets.IIS_USERNAME }}
-        password: ${{ secrets.IIS_PASSWORD }}
-        script: |
-          Stop-Website -Name "Personal Website" -ErrorAction SilentlyContinue
-          Expand-Archive -Path "C:\temp\site.zip" -DestinationPath "C:\inetpub\wwwroot" -Force
-          Start-Website -Name "Personal Website"
+        azPSVersion: "latest"
+        inlineScript: |
+          $securePassword = ConvertTo-SecureString "${{ secrets.IIS_PASSWORD }}" -AsPlainText -Force
+          $credential = New-Object System.Management.Automation.PSCredential ("${{ secrets.IIS_USERNAME }}", $securePassword)
+          
+          $session = New-PSSession -ComputerName "${{ secrets.IIS_HOST }}" -Credential $credential
+          
+          Invoke-Command -Session $session -ScriptBlock {
+            Stop-Website -Name "Personal Website" -ErrorAction SilentlyContinue
+            Expand-Archive -Path "C:\temp\site.zip" -DestinationPath "C:\inetpub\wwwroot" -Force
+            Start-Website -Name "Personal Website"
+          }
+          
+          Remove-PSSession $session
