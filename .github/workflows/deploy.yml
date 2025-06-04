@@ -1,4 +1,4 @@
-name: Deploy to IIS on Windows EC2
+name: Deploy to IIS via SSH
 
 on:
   push:
@@ -17,28 +17,17 @@ jobs:
       run: zip -r site.zip . -x "*.git*"
 
     - name: Install SSH client
-      run: sudo apt-get install -y sshpass
+      run: sudo apt-get install -y openssh-client
 
-    - name: Upload zip to EC2 via SCP
-      env:
-        PASSWORD: ${{ secrets.IIS_PASSWORD }}
+    - name: Upload zip to EC2
       run: |
-        sshpass -p "$PASSWORD" scp -o StrictHostKeyChecking=no site.zip ${{ secrets.IIS_USERNAME }}@${{ secrets.IIS_HOST }}:"C:/temp/site.zip"
+        echo "${{ secrets.IIS_KEY }}" > private_key.pem
+        chmod 600 private_key.pem
+        scp -i private_key.pem -o StrictHostKeyChecking=no site.zip ${{ secrets.IIS_USERNAME }}@${{ secrets.IIS_HOST }}:C:/temp/site.zip
 
-    - name: Deploy on EC2 via PowerShell
-      uses: Azure/powershell@v2
-      with:
-        azPSVersion: "latest"
-        inlineScript: |
-          $securePassword = ConvertTo-SecureString "${{ secrets.IIS_PASSWORD }}" -AsPlainText -Force
-          $credential = New-Object System.Management.Automation.PSCredential ("${{ secrets.IIS_USERNAME }}", $securePassword)
-          
-          $session = New-PSSession -ComputerName "${{ secrets.IIS_HOST }}" -Credential $credential
-          
-          Invoke-Command -Session $session -ScriptBlock {
-            Stop-Website -Name "Personal Website" -ErrorAction SilentlyContinue
-            Expand-Archive -Path "C:\temp\site.zip" -DestinationPath "C:\inetpub\wwwroot" -Force
-            Start-Website -Name "Personal Website"
-          }
-          
-          Remove-PSSession $session
+    - name: Deploy via PowerShell over SSH
+      run: |
+        ssh -i private_key.pem -o StrictHostKeyChecking=no ${{ secrets.IIS_USERNAME }}@${{ secrets.IIS_HOST }} powershell -Command "
+          Stop-Website -Name 'Personal Website' -ErrorAction SilentlyContinue;
+          Expand-Archive -Path 'C:\temp\site.zip' -DestinationPath 'C:\inetpub\wwwroot' -Force;
+          Start-Website -Name 'Personal Website'"
