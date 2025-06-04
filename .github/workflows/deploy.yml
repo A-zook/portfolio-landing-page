@@ -1,0 +1,37 @@
+name: Deploy to IIS on Windows EC2
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Zip website files
+      run: zip -r site.zip . -x "*.git*"
+
+    - name: Install SSH client
+      run: sudo apt-get install -y sshpass
+
+    - name: Upload zip to EC2 via SCP
+      env:
+        PASSWORD: ${{ secrets.IIS_PASSWORD }}
+      run: |
+        sshpass -p "$PASSWORD" scp -o StrictHostKeyChecking=no site.zip ${{ secrets.IIS_USERNAME }}@${{ secrets.IIS_HOST }}:C:/temp/site.zip
+
+    - name: Deploy on EC2 via PowerShell
+      uses: jsinh/windows-remote-powershell@v1.1
+      with:
+        host: ${{ secrets.IIS_HOST }}
+        username: ${{ secrets.IIS_USERNAME }}
+        password: ${{ secrets.IIS_PASSWORD }}
+        script: |
+          Stop-Website -Name "Personal Website" -ErrorAction SilentlyContinue
+          Expand-Archive -Path "C:\temp\site.zip" -DestinationPath "C:\inetpub\wwwroot" -Force
+          Start-Website -Name "Personal Website"
