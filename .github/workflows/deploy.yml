@@ -23,7 +23,7 @@ jobs:
       env:
         PASSWORD: ${{ secrets.IIS_PASSWORD }}
       run: |
-        sshpass -p "$PASSWORD" scp -o StrictHostKeyChecking=no site.zip ${{ secrets.IIS_USERNAME }}@${{ secrets.IIS_HOST }}:C:/temp/site.zip
+        sshpass -p "$PASSWORD" scp -o StrictHostKeyChecking=no site.zip ${{ secrets.IIS_USERNAME }}@${{ secrets.IIS_HOST }}:"C:/temp/site.zip"
 
     - name: Deploy on EC2 via PowerShell
       uses: jsinh/windows-remote-powershell@v1.1
