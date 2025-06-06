@@ -60,36 +60,65 @@ jobs:
             # Execute commands on the remote server
             Write-Host "Deploying to IIS"
             Invoke-Command -Session $session -ScriptBlock {
-              # Ensure the destination directory exists
-              if (-not (Test-Path "C:\inetpub\wwwroot\PersonalWebsite")) {
-                New-Item -Path "C:\inetpub\wwwroot\PersonalWebsite" -ItemType Directory -Force
+              # Create a deployment log file
+              $logFile = "C:\temp\deployment_log.txt"
+              Add-Content -Path $logFile -Value "Deployment started at $(Get-Date)"
+              
+              try {
+                # Ensure the destination directory exists
+                if (-not (Test-Path "C:\inetpub\wwwroot\PersonalWebsite")) {
+                  New-Item -Path "C:\inetpub\wwwroot\PersonalWebsite" -ItemType Directory -Force
+                  Add-Content -Path $logFile -Value "Created directory C:\inetpub\wwwroot\PersonalWebsite"
+                }
+                
+                # Check if website exists
+                $siteName = "Personal Website"
+                $siteExists = Get-Website -Name $siteName -ErrorAction SilentlyContinue
+                
+                if ($siteExists) {
+                  Write-Host "Stopping website: $siteName"
+                  Stop-Website -Name $siteName -ErrorAction SilentlyContinue
+                  Add-Content -Path $logFile -Value "Stopped website: $siteName"
+                } else {
+                  Write-Host "Website '$siteName' not found. Will create after extraction."
+                  Add-Content -Path $logFile -Value "Website '$siteName' not found. Will create after extraction."
+                }
+                
+                # Extract the zip file to the web root
+                Write-Host "Extracting files to web root"
+                Add-Content -Path $logFile -Value "Extracting files from C:\temp\site.zip to C:\inetpub\wwwroot\PersonalWebsite"
+                
+                # List files before extraction
+                $beforeFiles = Get-ChildItem -Path "C:\inetpub\wwwroot\PersonalWebsite" -Recurse | Select-Object -ExpandProperty FullName
+                Add-Content -Path $logFile -Value "Files before extraction:"
+                $beforeFiles | ForEach-Object { Add-Content -Path $logFile -Value $_ }
+                
+                # Extract files
+                Expand-Archive -Path 'C:\temp\site.zip' -DestinationPath 'C:\inetpub\wwwroot\PersonalWebsite' -Force
+                
+                # List files after extraction
+                $afterFiles = Get-ChildItem -Path "C:\inetpub\wwwroot\PersonalWebsite" -Recurse | Select-Object -ExpandProperty FullName
+                Add-Content -Path $logFile -Value "Files after extraction:"
+                $afterFiles | ForEach-Object { Add-Content -Path $logFile -Value $_ }
+                
+                # Create or start the website
+                if (-not $siteExists) {
+                  Write-Host "Creating new website: $siteName"
+                  New-Website -Name $siteName -PhysicalPath 'C:\inetpub\wwwroot\PersonalWebsite' -Port 80 -Force
+                  Add-Content -Path $logFile -Value "Created new website: $siteName"
+                } else {
+                  Write-Host "Starting website: $siteName"
+                  Start-Website -Name $siteName
+                  Add-Content -Path $logFile -Value "Started website: $siteName"
+                }
+                
+                Add-Content -Path $logFile -Value "Deployment completed successfully at $(Get-Date)"
               }
-              
-              # Check if website exists
-              $siteName = "Personal Website"
-              $siteExists = Get-Website -Name $siteName -ErrorAction SilentlyContinue
-              
-              if ($siteExists) {
-                Write-Host "Stopping website: $siteName"
-                Stop-Website -Name $siteName -ErrorAction SilentlyContinue
-              } else {
-                Write-Host "Website '$siteName' not found. Will create after extraction."
+              catch {
+                Add-Content -Path $logFile -Value "Error during deployment: $_"
+                Add-Content -Path $logFile -Value "Exception details: $($_.Exception)"
+                throw $_
               }
-              
-              # Extract the zip file to the web root
-              Write-Host "Extracting files to web root"
-              Expand-Archive -Path 'C:\temp\site.zip' -DestinationPath 'C:\inetpub\wwwroot\PersonalWebsite' -Force
-              
-              # Create or start the website
-              if (-not $siteExists) {
-                Write-Host "Creating new website: $siteName"
-                New-Website -Name $siteName -PhysicalPath 'C:\inetpub\wwwroot\PersonalWebsite' -Port 80 -Force
-              } else {
-                Write-Host "Starting website: $siteName"
-                Start-Website -Name $siteName
-              }
-              
-              Write-Host "Deployment completed successfully"
             }
             
             # Close the session
