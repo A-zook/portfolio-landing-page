@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - main
+  # Allow manual triggering
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -17,35 +19,82 @@ jobs:
       run: Compress-Archive -Path * -DestinationPath site.zip -Force -Exclude .git, .github
       shell: powershell
 
-    - name: Deploy to IIS via WinRM
-      uses: EnricoMi/publish-unit-test-result-action/download-artifact@v2
-      with:
-        name: site.zip
-        path: site.zip
+    - name: Debug Environment
+      run: |
+        Write-Host "Current directory: $(Get-Location)"
+        Write-Host "Files to deploy: $(Get-ChildItem -Recurse | Select-Object -First 10 | ForEach-Object { $_.FullName })"
+      shell: powershell
         
     - name: Deploy to Windows Server
       uses: Amadevus/pwsh-script@v2
       with:
         script: |
-          $password = ConvertTo-SecureString "${{ secrets.IIS_PASSWORD }}" -AsPlainText -Force
-          $credential = New-Object System.Management.Automation.PSCredential("${{ secrets.IIS_USERNAME }}", $password)
+          Write-Host "Starting deployment to ${{ secrets.IIS_HOST }}"
           
-          $session = New-PSSession -ComputerName ${{ secrets.IIS_HOST }} -Credential $credential -UseSSL:$false -Port 5985 -Authentication Negotiate
+          $ErrorActionPreference = "Continue"
           
-          # Copy the zip file to the remote server
-          Copy-Item -Path "site.zip" -Destination "C:\temp\site.zip" -ToSession $session
-          
-          # Execute commands on the remote server
-          Invoke-Command -Session $session -ScriptBlock {
-            # Stop the website
-            Stop-Website -Name 'Personal Website' -ErrorAction SilentlyContinue
+          try {
+            $securePassword = ConvertTo-SecureString "${{ secrets.IIS_PASSWORD }}" -AsPlainText -Force
+            $credential = New-Object System.Management.Automation.PSCredential("${{ secrets.IIS_USERNAME }}", $securePassword)
             
-            # Extract the zip file to the web root
-            Expand-Archive -Path 'C:\temp\site.zip' -DestinationPath 'C:\inetpub\wwwroot\PersonalWebsite' -Force
+            # Create C:\temp directory if it doesn't exist
+            $sessionOptions = New-PSSessionOption -SkipCACheck -SkipCNCheck -SkipRevocationCheck
             
-            # Start the website
-            Start-Website -Name 'Personal Website'
+            Write-Host "Attempting to connect to ${{ secrets.IIS_HOST }} on port 5985"
+            $session = New-PSSession -ComputerName ${{ secrets.IIS_HOST }} -Credential $credential -UseSSL:$false -Port 5985 -Authentication Negotiate -SessionOption $sessionOptions
+            
+            Write-Host "Connected to remote server. Creating temp directory if needed."
+            Invoke-Command -Session $session -ScriptBlock {
+              if (-not (Test-Path "C:\temp")) {
+                New-Item -Path "C:\temp" -ItemType Directory -Force
+              }
+            }
+            
+            # Copy the zip file to the remote server
+            Write-Host "Copying site.zip to remote server"
+            Copy-Item -Path "site.zip" -Destination "C:\temp\site.zip" -ToSession $session -Force
+            
+            # Execute commands on the remote server
+            Write-Host "Deploying to IIS"
+            Invoke-Command -Session $session -ScriptBlock {
+              # Ensure the destination directory exists
+              if (-not (Test-Path "C:\inetpub\wwwroot\PersonalWebsite")) {
+                New-Item -Path "C:\inetpub\wwwroot\PersonalWebsite" -ItemType Directory -Force
+              }
+              
+              # Check if website exists
+              $siteName = "Personal Website"
+              $siteExists = Get-Website -Name $siteName -ErrorAction SilentlyContinue
+              
+              if ($siteExists) {
+                Write-Host "Stopping website: $siteName"
+                Stop-Website -Name $siteName -ErrorAction SilentlyContinue
+              } else {
+                Write-Host "Website '$siteName' not found. Will create after extraction."
+              }
+              
+              # Extract the zip file to the web root
+              Write-Host "Extracting files to web root"
+              Expand-Archive -Path 'C:\temp\site.zip' -DestinationPath 'C:\inetpub\wwwroot\PersonalWebsite' -Force
+              
+              # Create or start the website
+              if (-not $siteExists) {
+                Write-Host "Creating new website: $siteName"
+                New-Website -Name $siteName -PhysicalPath 'C:\inetpub\wwwroot\PersonalWebsite' -Port 80 -Force
+              } else {
+                Write-Host "Starting website: $siteName"
+                Start-Website -Name $siteName
+              }
+              
+              Write-Host "Deployment completed successfully"
+            }
+            
+            # Close the session
+            Remove-PSSession -Session $session
+            Write-Host "Deployment process completed"
           }
-          
-          # Close the session
-          Remove-PSSession -Session $session
+          catch {
+            Write-Host "Error during deployment: $_"
+            Write-Host "Exception details: $($_.Exception)"
+            exit 1
+          }
